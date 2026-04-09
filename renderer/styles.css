@@ -1486,6 +1486,53 @@ body {
   width: 100%;
 }
 
+.setup-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.setup-divider::before,
+.setup-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--glass-border);
+}
+
+.setup-invite-section {
+  width: 100%;
+  text-align: center;
+}
+
+.invite-input-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.invite-input-row .input-field {
+  flex: 1;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+.invite-input-row .input-field:focus {
+  border-color: var(--accent);
+}
+
+.invite-connect-btn {
+  padding: 10px 20px !important;
+  font-size: 13px !important;
+  white-space: nowrap;
+}
+
 .setup-progress {
   width: 100%;
   margin-top: 20px;

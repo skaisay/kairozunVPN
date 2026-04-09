@@ -398,46 +398,62 @@ class VPNManager {
   }
 
   installWireGuard() {
-    const https = require('https');
-    const downloadUrl = 'https://download.wireguard.com/windows-client/wireguard-installer.exe';
-    const installerPath = path.join(os.tmpdir(), 'wireguard-installer.exe');
-
     return new Promise((resolve, reject) => {
-      console.log('[VPN] Скачиваю WireGuard...');
-      const file = fs.createWriteStream(installerPath);
+      console.log('[VPN] Устанавливаю WireGuard...');
 
-      const download = (url) => {
-        https.get(url, (response) => {
-          if (response.statusCode === 301 || response.statusCode === 302) {
-            download(response.headers.location);
+      // Способ 1: winget (работает в любой стране)
+      exec('winget install WireGuard.WireGuard --accept-package-agreements --accept-source-agreements --silent', 
+        { timeout: 180000, shell: 'powershell.exe' }, (error, stdout) => {
+        if (!error && this.findWireGuardExe()) {
+          console.log('[VPN] WireGuard установлен через winget');
+          resolve();
+          return;
+        }
+        console.log('[VPN] winget не сработал, пробую скачать напрямую...');
+
+        // Способ 2: прямая загрузка
+        const https = require('https');
+        const urls = [
+          'https://download.wireguard.com/windows-client/wireguard-installer.exe',
+          'https://github.com/nicholasgasior/docker-wireguard/releases/download/v1.0/wireguard-installer.exe'
+        ];
+        const installerPath = path.join(os.tmpdir(), 'wireguard-installer.exe');
+
+        const tryDownload = (urlIndex) => {
+          if (urlIndex >= urls.length) {
+            reject(new Error('Не удалось скачать WireGuard. Установите вручную: winget install WireGuard.WireGuard'));
             return;
           }
-          if (response.statusCode !== 200) {
-            reject(new Error(`HTTP ${response.statusCode}`));
-            return;
-          }
-          response.pipe(file);
-          file.on('finish', () => {
-            file.close();
-            console.log('[VPN] Устанавливаю WireGuard...');
-            exec(`"${installerPath}" /S /D=C:\\Program Files\\WireGuard`, { timeout: 120000 }, (error) => {
-              // Удаляем установщик
-              try { fs.unlinkSync(installerPath); } catch {}
-              if (error) {
-                // Попробуем msiexec если /S не работает
-                exec(`Start-Process -FilePath "${installerPath}" -ArgumentList '/qn' -Verb RunAs -Wait`, { shell: 'powershell.exe', timeout: 120000 }, (err2) => {
-                  try { fs.unlinkSync(installerPath); } catch {}
-                  if (err2) reject(new Error('Ошибка установки WireGuard'));
-                  else resolve();
-                });
-              } else {
-                resolve();
+          const file = fs.createWriteStream(installerPath);
+          const download = (url) => {
+            https.get(url, { timeout: 30000 }, (response) => {
+              if (response.statusCode === 301 || response.statusCode === 302) {
+                download(response.headers.location);
+                return;
               }
+              if (response.statusCode !== 200) {
+                file.close();
+                tryDownload(urlIndex + 1);
+                return;
+              }
+              response.pipe(file);
+              file.on('finish', () => {
+                file.close();
+                exec(`"${installerPath}" /S /D=C:\\Program Files\\WireGuard`, { timeout: 120000 }, () => {
+                  try { fs.unlinkSync(installerPath); } catch {}
+                  if (this.findWireGuardExe()) resolve();
+                  else tryDownload(urlIndex + 1);
+                });
+              });
+            }).on('error', () => {
+              file.close();
+              tryDownload(urlIndex + 1);
             });
-          });
-        }).on('error', reject);
-      };
-      download(downloadUrl);
+          };
+          download(urls[urlIndex]);
+        };
+        tryDownload(0);
+      });
     });
   }
 

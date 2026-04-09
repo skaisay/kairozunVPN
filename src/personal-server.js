@@ -510,7 +510,15 @@ class PersonalServer {
 
   async connectAsFriend(inviteData) {
     if (!this.isTailscaleInstalled()) {
+      console.log('[Friend] Tailscale не установлен, устанавливаю...');
       await this.installTailscale();
+      // После установки подождем запуск сервиса
+      await new Promise(r => setTimeout(r, 5000));
+    }
+
+    // Проверяем что Tailscale реально найден
+    if (!this.isTailscaleInstalled()) {
+      throw new Error('Не удалось установить Tailscale. Установите вручную: https://tailscale.com/download');
     }
 
     if (!inviteData.ts || !inviteData.ts.authKey) {
@@ -529,28 +537,54 @@ class PersonalServer {
     }
 
     // Проверяем текущий статус Tailscale
-    const status = await this.getTailscaleStatus();
+    let status = await this.getTailscaleStatus();
+    console.log('[Friend] Статус Tailscale:', status?.BackendState || 'null');
+
+    // Если NoState или Stopped — запускаем сервис
+    if (!status || status.BackendState === 'NoState' || status.BackendState === 'Stopped') {
+      console.log('[Friend] Запускаю сервис Tailscale...');
+      try {
+        exec('net start Tailscale', { timeout: 15000 }, () => {});
+        await new Promise(r => setTimeout(r, 3000));
+        status = await this.getTailscaleStatus();
+        console.log('[Friend] Статус после запуска сервиса:', status?.BackendState || 'null');
+      } catch {}
+    }
+
     const isRunning = status && status.BackendState === 'Running';
 
     if (!isRunning) {
-      // Если не запущен — авторизуемся с ключом
+      // Авторизуемся с ключом
+      console.log('[Friend] Авторизуюсь с auth key...');
       try {
         await this.runTailscaleCmd(`up --auth-key=${authKey} --accept-routes --reset`);
       } catch (e) {
-        // Если ошибка — попробуем без --reset
-        await this.runTailscaleCmd(`up --auth-key=${authKey} --accept-routes`);
+        console.log('[Friend] up --reset failed:', e.message);
+        try {
+          await this.runTailscaleCmd(`up --auth-key=${authKey} --accept-routes`);
+        } catch (e2) {
+          console.log('[Friend] up failed:', e2.message);
+          throw new Error('Не удалось авторизоваться в Tailscale: ' + e2.message);
+        }
       }
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Проверяем что подключились
+      status = await this.getTailscaleStatus();
+      if (!status || status.BackendState !== 'Running') {
+        throw new Error('Tailscale не подключился. Статус: ' + (status?.BackendState || 'NoState'));
+      }
     }
 
     if (exitNode) {
+      console.log('[Friend] Устанавливаю exit node:', exitNode);
       await this.runTailscaleCmd(`set --exit-node=${exitNode}`);
-      // Автоматически принять exit node
       try {
         await this.runTailscaleCmd(`set --accept-routes`);
       } catch {}
     }
 
+    console.log('[Friend] Подключено!');
     return { connected: true, exitNode };
   }
 

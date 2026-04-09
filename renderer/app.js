@@ -90,6 +90,11 @@ class KairozunApp {
       this.autoSetupWarp();
     });
 
+    // Подключение по коду из стартового экрана
+    document.getElementById('btn-setup-invite').addEventListener('click', () => {
+      this.connectViaSetupInvite();
+    });
+
     // Тест скорости
     document.getElementById('btn-run-speed').addEventListener('click', () => {
       this.runSpeedTest();
@@ -1049,6 +1054,33 @@ class KairozunApp {
     }
 
     btn.textContent = 'Подключить';
+    btn.disabled = false;
+  }
+
+  async connectViaSetupInvite() {
+    const input = document.getElementById('setup-invite-code');
+    const code = input.value.trim();
+    if (!code) {
+      this.notify('Вставьте код приглашения', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('btn-setup-invite');
+    btn.querySelector('span').textContent = 'Подключение...';
+    btn.disabled = true;
+
+    const result = await window.kairozunAPI.serverImportInvite(code);
+    if (result.success) {
+      input.value = '';
+      this.hideModal('modal-setup');
+      this.notify('Подключено через VPN друга!', 'success');
+      this.setConnected(true);
+      setTimeout(() => this.checkIP(), 4000);
+    } else {
+      this.notify(result.error || 'Неверный код', 'error');
+    }
+
+    btn.querySelector('span').textContent = 'Подключить';
     btn.disabled = false;
   }
 
