@@ -12,6 +12,11 @@ RequestExecutionLevel admin
 !define MUI_UNICON "assets\icon.ico"
 !define MUI_ABORTWARNING
 
+; Finish page — запускать приложение после установки
+!define MUI_FINISHPAGE_RUN "$INSTDIR\KairozunVPN.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Запустить KairozunVPN"
+!define MUI_FINISHPAGE_RUN_CHECKED
+
 ; Pages
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
