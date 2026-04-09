@@ -269,11 +269,22 @@ class VPNManager {
   }
 
   connectWindows(confPath) {
-    return new Promise((resolve, reject) => {
-      const wgExe = this.findWireGuardExe();
+    return new Promise(async (resolve, reject) => {
+      let wgExe = this.findWireGuardExe();
 
       if (!wgExe) {
-        reject(new Error('WireGuard не установлен. Скачайте: https://www.wireguard.com/install/'));
+        // Автоматически скачиваем и устанавливаем WireGuard
+        try {
+          await this.installWireGuard();
+          wgExe = this.findWireGuardExe();
+        } catch (e) {
+          reject(new Error('Не удалось установить WireGuard: ' + e.message));
+          return;
+        }
+      }
+
+      if (!wgExe) {
+        reject(new Error('WireGuard не найден после установки. Перезапустите приложение.'));
         return;
       }
 
@@ -384,6 +395,50 @@ class VPNManager {
       if (fs.existsSync(p)) return p;
     }
     return null;
+  }
+
+  installWireGuard() {
+    const https = require('https');
+    const downloadUrl = 'https://download.wireguard.com/windows-client/wireguard-installer.exe';
+    const installerPath = path.join(os.tmpdir(), 'wireguard-installer.exe');
+
+    return new Promise((resolve, reject) => {
+      console.log('[VPN] Скачиваю WireGuard...');
+      const file = fs.createWriteStream(installerPath);
+
+      const download = (url) => {
+        https.get(url, (response) => {
+          if (response.statusCode === 301 || response.statusCode === 302) {
+            download(response.headers.location);
+            return;
+          }
+          if (response.statusCode !== 200) {
+            reject(new Error(`HTTP ${response.statusCode}`));
+            return;
+          }
+          response.pipe(file);
+          file.on('finish', () => {
+            file.close();
+            console.log('[VPN] Устанавливаю WireGuard...');
+            exec(`"${installerPath}" /S /D=C:\\Program Files\\WireGuard`, { timeout: 120000 }, (error) => {
+              // Удаляем установщик
+              try { fs.unlinkSync(installerPath); } catch {}
+              if (error) {
+                // Попробуем msiexec если /S не работает
+                exec(`Start-Process -FilePath "${installerPath}" -ArgumentList '/qn' -Verb RunAs -Wait`, { shell: 'powershell.exe', timeout: 120000 }, (err2) => {
+                  try { fs.unlinkSync(installerPath); } catch {}
+                  if (err2) reject(new Error('Ошибка установки WireGuard'));
+                  else resolve();
+                });
+              } else {
+                resolve();
+              }
+            });
+          });
+        }).on('error', reject);
+      };
+      download(downloadUrl);
+    });
   }
 
   findWgExe() {

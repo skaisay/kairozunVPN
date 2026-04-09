@@ -31,11 +31,17 @@ class PersonalServer {
   loadServerData() {
     try {
       if (fs.existsSync(this.serverDataFile)) {
-        this.serverData = JSON.parse(fs.readFileSync(this.serverDataFile, 'utf-8'));
+        const fromDisk = JSON.parse(fs.readFileSync(this.serverDataFile, 'utf-8'));
+        // Мержим: данные с диска имеют приоритет, но не теряем то что в памяти
+        if (this.serverData) {
+          this.serverData = { ...this.serverData, ...fromDisk };
+        } else {
+          this.serverData = fromDisk;
+        }
         console.log('[Server] Конфиг загружен:', Object.keys(this.serverData).join(', '));
       }
     } catch {
-      this.serverData = null;
+      if (!this.serverData) this.serverData = null;
     }
   }
 
@@ -51,6 +57,8 @@ class PersonalServer {
 
   // Обновить отдельные поля, не затирая остальные
   updateServerData(fields) {
+    // Всегда перезагружаем с диска перед записью, чтобы не потерять ключи
+    this.loadServerData();
     if (!this.serverData) this.serverData = {};
     Object.assign(this.serverData, fields);
     fs.writeFileSync(this.serverDataFile, JSON.stringify(this.serverData, null, 2), { encoding: 'utf-8' });
@@ -468,6 +476,8 @@ class PersonalServer {
   // === Invite-коды ===
 
   generateInviteCode(friendName) {
+    // Перезагружаем данные с диска на случай обновления
+    this.loadServerData();
     if (!this.serverData?.authKey) {
       throw new Error('Сервер не настроен. Нажмите «Настроить».');
     }
@@ -518,11 +528,27 @@ class PersonalServer {
       throw new Error('Невалидный exit node');
     }
 
-    await this.runTailscaleCmd(`up --auth-key=${authKey} --accept-routes`);
-    await new Promise(r => setTimeout(r, 5000));
+    // Проверяем текущий статус Tailscale
+    const status = await this.getTailscaleStatus();
+    const isRunning = status && status.BackendState === 'Running';
+
+    if (!isRunning) {
+      // Если не запущен — авторизуемся с ключом
+      try {
+        await this.runTailscaleCmd(`up --auth-key=${authKey} --accept-routes --reset`);
+      } catch (e) {
+        // Если ошибка — попробуем без --reset
+        await this.runTailscaleCmd(`up --auth-key=${authKey} --accept-routes`);
+      }
+      await new Promise(r => setTimeout(r, 3000));
+    }
 
     if (exitNode) {
       await this.runTailscaleCmd(`set --exit-node=${exitNode}`);
+      // Автоматически принять exit node
+      try {
+        await this.runTailscaleCmd(`set --accept-routes`);
+      } catch {}
     }
 
     return { connected: true, exitNode };

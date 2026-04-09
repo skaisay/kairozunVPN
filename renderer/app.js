@@ -498,6 +498,27 @@ class KairozunApp {
       return;
     }
 
+    // Tailscale-сервер подключается через exit-node, а не WireGuard
+    if (server.id === 'tailscale-personal') {
+      this.setConnecting(true);
+      const result = await window.kairozunAPI.serverStart();
+      if (result.success) {
+        this.setConnected(true);
+        this.notify('Подключено через Tailscale Exit Node', 'success');
+        setTimeout(() => this.checkIP(), 4000);
+      } else {
+        this.setConnecting(false);
+        this.setConnected(false);
+        this.notify(result.error || 'Ошибка подключения к Tailscale', 'error');
+      }
+      return;
+    }
+
+    if (!server.config) {
+      this.notify('Конфигурация сервера отсутствует', 'error');
+      return;
+    }
+
     this.setConnecting(true);
 
     const result = await window.kairozunAPI.connect(server.config);
