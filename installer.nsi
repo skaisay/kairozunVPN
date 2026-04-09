@@ -27,9 +27,14 @@ RequestExecutionLevel admin
 
 ; Install section
 Section "KairozunVPN" SecMain
+  ; Закрываем приложение если запущено
+  nsExec::ExecToLog 'taskkill /f /im KairozunVPN.exe'
+  nsExec::ExecToLog 'taskkill /f /im electron.exe'
+  Sleep 1000
+
   SetOutPath "$INSTDIR"
   
-  ; Copy all files from packaged app
+  ; Copy all files from packaged app — /REBOOTOK для заблокированных файлов
   File /r "dist\KairozunVPN-win32-x64\*.*"
   
   ; Create uninstaller
@@ -54,6 +59,11 @@ SectionEnd
 
 ; Uninstall section
 Section "Uninstall"
+  ; Закрываем приложение перед удалением
+  nsExec::ExecToLog 'taskkill /f /im KairozunVPN.exe'
+  nsExec::ExecToLog 'taskkill /f /im electron.exe'
+  Sleep 500
+
   ; Remove files
   RMDir /r "$INSTDIR"
   
