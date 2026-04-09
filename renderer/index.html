@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self';">
+  <title>KairozunVPN</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Анимированный фон -->
+    <div class="background-animation">
+      <div class="bg-orb bg-orb-1"></div>
+      <div class="bg-orb bg-orb-2"></div>
+      <div class="bg-orb bg-orb-3"></div>
+    </div>
+
+    <!-- Заголовок окна -->
+    <div class="titlebar" id="titlebar">
+      <div class="titlebar-title">
+        <svg class="titlebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+        <span>KairozunVPN</span>
+      </div>
+      <div class="titlebar-controls">
+        <button class="titlebar-btn minimize-btn" id="btn-minimize" title="Свернуть">
+          <svg viewBox="0 0 12 12" width="12" height="12">
+            <line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+        </button>
+        <button class="titlebar-btn close-btn" id="btn-close" title="Закрыть">
+          <svg viewBox="0 0 12 12" width="12" height="12">
+            <line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Главный контент -->
+    <div class="main-content">
+
+      <!-- Блок текущего IP -->
+      <div class="ip-card glass-card" id="ip-card">
+        <div class="ip-row">
+          <div class="ip-info">
+            <div class="ip-label">Ваш IP-адрес</div>
+            <div class="ip-value-row">
+              <div class="ip-value" id="current-ip-display">Определение...</div>
+              <button class="icon-btn ip-eye-btn" id="btn-toggle-ip" title="Показать / скрыть IP">
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" id="eye-icon">
+                  <path d="M1 10s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/>
+                  <circle cx="10" cy="10" r="3"/>
+                  <line x1="3" y1="17" x2="17" y2="3" id="eye-slash" style="display:none"/>
+                </svg>
+              </button>
+            </div>
+            <div class="ip-location" id="ip-location">---</div>
+          </div>
+          <button class="icon-btn" id="btn-refresh-ip" title="Обновить IP">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M4 10a6 6 0 0111.3-2.7M16 10a6 6 0 01-11.3 2.7"/>
+              <path d="M16 4v4h-4M4 16v-4h4"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Статус подключения -->
+      <div class="status-section">
+        <div class="status-ring" id="status-ring">
+          <div class="status-ring-inner">
+            <div class="status-icon" id="status-icon">
+              <svg viewBox="0 0 48 48" width="48" height="48" fill="none">
+                <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z"
+                      stroke="currentColor" stroke-width="2.5" fill="none" class="shield-path"/>
+                <path d="M16 24l5 5 11-11" stroke="currentColor" stroke-width="2.5" fill="none"
+                      stroke-linecap="round" stroke-linejoin="round" class="check-path" style="display:none"/>
+                <circle cx="24" cy="24" r="3" fill="currentColor" class="dot-path"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="status-text" id="status-text">Отключено</div>
+        <div class="status-detail" id="status-detail">Нажмите для подключения</div>
+      </div>
+
+      <!-- Кнопка подключения -->
+      <div class="connect-section">
+        <button class="connect-btn" id="btn-connect">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          <span>Подключиться</span>
+        </button>
+      </div>
+
+      <!-- Быстрые действия -->
+      <div class="quick-actions">
+        <button class="quick-btn" id="btn-change-ip" title="Сменить IP">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M4 10a6 6 0 0111.3-2.7M16 10a6 6 0 01-11.3 2.7"/>
+            <path d="M16 4v4h-4M4 16v-4h4"/>
+          </svg>
+          <span>Сменить IP</span>
+        </button>
+        <button class="quick-btn" id="btn-speed-test" title="Тест скорости">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="10" cy="12" r="7"/>
+            <path d="M10 12l3-5"/>
+            <path d="M6 9h1M13 9h1M10 6v1"/>
+          </svg>
+          <span>Скорость</span>
+        </button>
+      </div>
+
+      <!-- Статистика трафика -->
+      <div class="traffic-section glass-card" id="traffic-section" style="display:none">
+        <div class="traffic-row">
+          <div class="traffic-item">
+            <div class="traffic-label">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M8 12V4M4 8l4-4 4 4"/>
+              </svg>
+              Отправлено
+            </div>
+            <div class="traffic-value" id="traffic-up">0 B</div>
+          </div>
+          <div class="traffic-divider"></div>
+          <div class="traffic-item">
+            <div class="traffic-label">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M8 4v8M4 8l4 4 4-4"/>
+              </svg>
+              Получено
+            </div>
+            <div class="traffic-value" id="traffic-down">0 B</div>
+          </div>
+        </div>
+        <div class="traffic-row">
+          <div class="traffic-item">
+            <div class="traffic-label">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="8" cy="8" r="6"/>
+                <path d="M8 4v4l3 2"/>
+              </svg>
+              Время
+            </div>
+            <div class="traffic-value" id="connection-time">00:00:00</div>
+          </div>
+          <div class="traffic-divider"></div>
+          <div class="traffic-item">
+            <div class="traffic-label">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2 10l4-6 3 4 2-2 4 4"/>
+              </svg>
+              Скорость
+            </div>
+            <div class="traffic-value" id="speed-display">-- Мбит/с</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Список серверов -->
+      <div class="servers-section">
+        <div class="section-header">
+          <h3>Серверы</h3>
+          <div class="section-actions">
+            <button class="icon-btn" id="btn-import" title="Импорт .conf файла">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M10 3v10M6 9l4 4 4-4"/>
+                <path d="M3 14v2a1 1 0 001 1h12a1 1 0 001-1v-2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="servers-list" id="servers-list">
+        </div>
+      </div>
+    </div>
+
+    <!-- Нижняя панель -->
+    <div class="bottom-bar">
+      <button class="bottom-btn" id="btn-settings" title="Настройки">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+      </button>
+      <div class="bottom-status">
+        <div class="bottom-indicator" id="bottom-indicator"></div>
+        <span id="bottom-status-text">Защита отключена</span>
+      </div>
+      <button class="bottom-btn beta-btn" id="btn-server-mode" title="Beta: Мой сервер">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <path d="M8 21h8M12 17v4"/>
+          <circle cx="12" cy="10" r="1" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Модальное: первый запуск -->
+  <div class="modal-overlay" id="modal-setup" style="display:none">
+    <div class="modal glass-card modal-wide">
+      <div class="modal-header">
+        <h3>Добро пожаловать в KairozunVPN</h3>
+      </div>
+      <div class="modal-body setup-body">
+        <div class="setup-icon">
+          <svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="32" cy="32" r="28" opacity="0.3"/>
+            <path d="M32 10L14 20v16c0 14 10.7 27 18 30 7.3-3 18-16 18-30V20L32 10z"
+                  stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M24 32l5 5 11-11" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <p class="setup-text">Настройка бесплатного VPN через Cloudflare WARP</p>
+        <p class="setup-subtext">Безлимитный трафик. Без регистрации. Без оплаты.</p>
+        <p class="setup-subtext">Шифрование WireGuard (ChaCha20 + Curve25519)</p>
+        <button class="connect-btn setup-btn" id="btn-auto-setup">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+          </svg>
+          <span>Настроить автоматически</span>
+        </button>
+        <div class="setup-progress" id="setup-progress" style="display:none">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-text" id="progress-text">Генерация ключей...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное: настройки -->
+  <div class="modal-overlay" id="modal-settings" style="display:none">
+    <div class="modal glass-card">
+      <div class="modal-header">
+        <h3>Настройки</h3>
+        <button class="icon-btn modal-close" data-modal="modal-settings">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-label">Kill Switch</div>
+            <div class="setting-desc">Блокировать интернет при разрыве VPN</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="setting-killswitch">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-label">DNS серверы</div>
+            <div class="setting-desc">Используются при VPN-подключении</div>
+          </div>
+          <input type="text" class="setting-input" id="setting-dns" placeholder="1.1.1.1, 8.8.8.8" value="1.1.1.1, 1.0.0.1">
+        </div>
+        <div class="setting-divider"></div>
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-label">Сбросить WARP</div>
+            <div class="setting-desc">Перерегистрация для нового профиля</div>
+          </div>
+          <button class="small-btn danger" id="btn-reset-warp">Сбросить</button>
+        </div>
+        <div class="setting-divider"></div>
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-label">Генератор ключей</div>
+            <div class="setting-desc">Создать пару WireGuard ключей</div>
+          </div>
+          <button class="small-btn" id="btn-keygen">Открыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное: генератор ключей -->
+  <div class="modal-overlay" id="modal-keygen" style="display:none">
+    <div class="modal glass-card">
+      <div class="modal-header">
+        <h3>Генератор ключей WireGuard</h3>
+        <button class="icon-btn modal-close" data-modal="modal-keygen">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="keygen-field">
+          <label>Приватный ключ</label>
+          <div class="keygen-value">
+            <input type="text" id="keygen-private" readonly placeholder="Нажмите 'Сгенерировать'">
+            <button class="copy-btn" data-copy="keygen-private" title="Копировать">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="5" y="5" width="9" height="9" rx="1"/>
+                <path d="M11 5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v7a1 1 0 001 1h2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="keygen-field">
+          <label>Публичный ключ</label>
+          <div class="keygen-value">
+            <input type="text" id="keygen-public" readonly placeholder="Нажмите 'Сгенерировать'">
+            <button class="copy-btn" data-copy="keygen-public" title="Копировать">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="5" y="5" width="9" height="9" rx="1"/>
+                <path d="M11 5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v7a1 1 0 001 1h2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <button class="generate-btn" id="btn-generate-keys">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M4 10a6 6 0 0111.3-2.7M16 10a6 6 0 01-11.3 2.7"/>
+            <path d="M16 4v4h-4M4 16v-4h4"/>
+          </svg>
+          Сгенерировать
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное: тест скорости -->
+  <div class="modal-overlay" id="modal-speed" style="display:none">
+    <div class="modal glass-card">
+      <div class="modal-header">
+        <h3>Тест скорости</h3>
+        <button class="icon-btn modal-close" data-modal="modal-speed">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body speed-body">
+        <div class="speed-gauge">
+          <div class="speed-value" id="speed-result">--</div>
+          <div class="speed-unit">Мбит/с</div>
+        </div>
+        <div class="speed-details" id="speed-details"></div>
+        <button class="generate-btn" id="btn-run-speed">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polygon points="5 3 17 10 5 17 5 3"/>
+          </svg>
+          <span>Запустить тест</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное: Beta Сервер -->
+  <div class="modal-overlay" id="modal-server" style="display:none">
+    <div class="modal glass-card modal-wide">
+      <div class="modal-header">
+        <h3>🖥️ Мой VPN-сервер <span class="beta-badge">BETA</span></h3>
+        <button class="icon-btn modal-close" data-modal="modal-server">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="setup-subtext" style="margin-bottom:12px">Твой ПК = VPN-сервер. Друзья подключаются через твой интернет.</p>
+
+        <!-- Как это работает -->
+        <div class="server-how-it-works">
+          <div class="how-step"><span class="how-num">1</span> Запусти сервер (кнопка ниже)</div>
+          <div class="how-step"><span class="how-num">2</span> Добавь друга → получи код</div>
+          <div class="how-step"><span class="how-num">3</span> Отправь код другу в мессенджере</div>
+          <div class="how-step"><span class="how-num">4</span> Друг вставляет код в «Подключиться к другу»</div>
+        </div>
+
+        <!-- Статус сервера -->
+        <div class="server-status-card glass-card" id="server-status-card">
+          <div class="server-status-row">
+            <div class="server-status-indicator" id="server-indicator"></div>
+            <span id="server-status-label">Сервер не запущен</span>
+          </div>
+          <div class="server-status-details" id="server-details" style="display:none">
+            <div class="server-detail-item">
+              <span>IP:</span>
+              <span id="server-public-ip">—</span>
+            </div>
+            <div class="server-detail-item">
+              <span>Порт:</span>
+              <span id="server-port">51820 (UDP)</span>
+            </div>
+            <div class="server-detail-item">
+              <span>Клиенты:</span>
+              <span id="server-client-count">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Кнопки управления сервером -->
+        <div class="server-controls">
+          <button class="connect-btn server-start-btn" id="btn-server-toggle">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            <span>Запустить сервер</span>
+          </button>
+        </div>
+
+        <!-- Предупреждение о проброске порта -->
+        <div class="server-warning" id="server-port-warning">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="#f59e0b" stroke-width="1.5">
+            <path d="M10 2L1 18h18L10 2zM10 8v4M10 14v1"/>
+          </svg>
+          <span>Пробросьте порт <b>51820/UDP</b> на роутере для доступа из интернета</span>
+        </div>
+
+        <div class="setting-divider"></div>
+
+        <!-- Добавить друга -->
+        <h4 style="margin:8px 0 6px;font-size:13px;color:rgba(255,255,255,.7)">Друзья</h4>
+        <div class="server-add-friend">
+          <input type="text" class="setting-input" id="friend-name-input" placeholder="Имя друга (напр. Артём)">
+          <button class="small-btn" id="btn-add-friend">+ Добавить</button>
+        </div>
+
+        <!-- Список клиентов -->
+        <div class="server-clients-list" id="server-clients-list">
+          <div class="empty-servers" style="padding:10px"><span style="opacity:.5">Нет клиентов</span></div>
+        </div>
+
+        <div class="setting-divider"></div>
+
+        <!-- Импорт invite-кода (для клиента) -->
+        <h4 style="margin:8px 0 6px;font-size:13px;color:rgba(255,255,255,.7)">Подключиться к другу</h4>
+        <div class="server-add-friend">
+          <input type="text" class="setting-input" id="invite-code-input" placeholder="Вставьте код приглашения">
+          <button class="small-btn" id="btn-import-invite">Подключить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное: Invite-код -->
+  <div class="modal-overlay" id="modal-invite" style="display:none">
+    <div class="modal glass-card">
+      <div class="modal-header">
+        <h3>📋 Код для друга</h3>
+        <button class="icon-btn modal-close" data-modal="modal-invite">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="setup-subtext" style="margin-bottom:6px">Скопируй этот код и отправь другу в Telegram/WhatsApp.</p>
+        <p class="setup-subtext" style="margin-bottom:10px;color:rgba(255,255,255,.5)">Друг вставит его в KairozunVPN → β → «Подключиться к другу»</p>
+        <div class="invite-code-box" id="invite-code-box"></div>
+        <input type="hidden" id="invite-code-display">
+        <button class="invite-copy-btn" id="btn-copy-invite">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="5" y="5" width="9" height="9" rx="1"/>
+            <path d="M11 5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v7a1 1 0 001 1h2"/>
+          </svg>
+          Скопировать код
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Уведомления -->
+  <div class="notifications" id="notifications"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
