@@ -74,15 +74,36 @@ class PersonalServer {
       'C:\\Program Files\\Tailscale\\tailscale.exe',
       'C:\\Program Files (x86)\\Tailscale\\tailscale.exe',
       path.join(os.homedir(), 'AppData', 'Local', 'Tailscale', 'tailscale.exe'),
-      path.join(process.env.ProgramFiles || '', 'Tailscale', 'tailscale.exe')
+      path.join(process.env.ProgramFiles || '', 'Tailscale', 'tailscale.exe'),
+      path.join(process.env.ProgramW6432 || '', 'Tailscale', 'tailscale.exe'),
+      path.join(process.env.LOCALAPPDATA || '', 'Tailscale', 'tailscale.exe'),
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Tailscale', 'tailscale.exe')
     ];
     for (const p of paths) {
-      if (fs.existsSync(p)) {
+      if (p && fs.existsSync(p)) {
         this.tailscaleExe = p;
         return p;
       }
     }
     return null;
+  }
+
+  // Поиск через where.exe (fallback для нестандартных путей)
+  findTailscaleViaWhere() {
+    return new Promise((resolve) => {
+      exec('where tailscale.exe 2>nul', { timeout: 5000 }, (error, stdout) => {
+        if (!error && stdout && stdout.trim()) {
+          const found = stdout.trim().split('\n')[0].trim();
+          if (fs.existsSync(found)) {
+            this.tailscaleExe = found;
+            console.log('[Tailscale] Найден через where:', found);
+            resolve(found);
+            return;
+          }
+        }
+        resolve(null);
+      });
+    });
   }
 
   isTailscaleInstalled() {
@@ -92,13 +113,48 @@ class PersonalServer {
   // === Установка ===
 
   async installTailscale() {
-    try {
-      await this.installViaWinget();
-      await this.waitForTailscale();
-      if (this.findTailscale()) return { installed: true };
-    } catch {}
+    console.log('[Install] Начинаю установку Tailscale...');
 
-    return await this.installViaMSI();
+    // Способ 1: winget (работает через Microsoft CDN, обход блокировок)
+    try {
+      console.log('[Install] Пробую winget...');
+      await this.installViaWinget();
+      await this.waitForTailscale(20);
+      if (this.findTailscale() || await this.findTailscaleViaWhere()) {
+        console.log('[Install] Установлен через winget');
+        return { installed: true };
+      }
+    } catch (e) {
+      console.log('[Install] winget не сработал:', e.message);
+    }
+
+    // Способ 2: MSI с нескольких зеркал
+    try {
+      console.log('[Install] Пробую MSI...');
+      await this.installViaMSI();
+      await this.waitForTailscale(20);
+      if (this.findTailscale() || await this.findTailscaleViaWhere()) {
+        console.log('[Install] Установлен через MSI');
+        return { installed: true };
+      }
+    } catch (e) {
+      console.log('[Install] MSI не сработал:', e.message);
+    }
+
+    // Способ 3: chocolatey
+    try {
+      console.log('[Install] Пробую chocolatey...');
+      await this.installViaChoco();
+      await this.waitForTailscale(15);
+      if (this.findTailscale() || await this.findTailscaleViaWhere()) {
+        console.log('[Install] Установлен через chocolatey');
+        return { installed: true };
+      }
+    } catch (e) {
+      console.log('[Install] choco не сработал:', e.message);
+    }
+
+    throw new Error('Не удалось установить Tailscale. Установите вручную: https://tailscale.com/download');
   }
 
   installViaWinget() {
@@ -114,9 +170,21 @@ class PersonalServer {
   installViaMSI() {
     return new Promise((resolve, reject) => {
       const msiPath = path.join(os.tmpdir(), 'tailscale-setup.msi');
+      const urls = [
+        'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi',
+        'https://pkgs.tailscale.com/unstable/tailscale-setup-latest-amd64.msi'
+      ];
       const psScript = `
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile '${msiPath.replace(/'/g, "''")}' -UseBasicParsing
+        $$urls = @(${urls.map(u => `'${u}'`).join(',')})
+        $$ok = $$false
+        foreach ($$u in $$urls) {
+          try {
+            Invoke-WebRequest -Uri $$u -OutFile '${msiPath.replace(/'/g, "''")}' -UseBasicParsing -TimeoutSec 60
+            if (Test-Path '${msiPath.replace(/'/g, "''")}') { $$ok = $$true; break }
+          } catch {}
+        }
+        if (-not $$ok) { throw 'Download failed' }
         Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i','${msiPath.replace(/'/g, "''")}','/quiet','/norestart' -Wait
         Remove-Item '${msiPath.replace(/'/g, "''")}' -Force -ErrorAction SilentlyContinue
       `.trim();
@@ -126,25 +194,47 @@ class PersonalServer {
 
       const psCmd = `Start-Process -FilePath 'powershell.exe' -ArgumentList '-ExecutionPolicy','Bypass','-File','${scriptPath.replace(/'/g, "''")}' -Verb RunAs -Wait -WindowStyle Hidden`;
 
-      exec(`powershell -Command "${psCmd}"`, { timeout: 180000 }, (error) => {
+      exec(`powershell -Command "${psCmd}"`, { timeout: 300000 }, (error) => {
         try { fs.unlinkSync(scriptPath); } catch {}
         if (error) {
-          reject(new Error('Подтвердите установку Tailscale (UAC)'));
+          reject(new Error('Ошибка скачивания/установки MSI: ' + error.message));
           return;
         }
-        this.waitForTailscale().then(() => {
-          if (this.findTailscale()) {
-            resolve({ installed: true });
-          } else {
-            reject(new Error('Tailscale не найден после установки'));
-          }
-        }).catch(reject);
+        resolve();
       });
     });
   }
 
-  waitForTailscale() {
-    return new Promise((resolve) => setTimeout(resolve, 5000));
+  installViaChoco() {
+    return new Promise((resolve, reject) => {
+      const psCmd = `Start-Process -FilePath 'powershell.exe' -ArgumentList '-Command','choco install tailscale -y --force' -Verb RunAs -Wait -WindowStyle Hidden`;
+      exec(`powershell -Command "${psCmd}"`, { timeout: 180000 }, (error) => {
+        if (error) { reject(error); return; }
+        resolve();
+      });
+    });
+  }
+
+  waitForTailscale(maxAttempts = 15) {
+    return new Promise((resolve) => {
+      let attempts = 0;
+      const check = () => {
+        attempts++;
+        this.tailscaleExe = null; // сброс кэша
+        if (this.findTailscale()) {
+          console.log(`[Install] tailscale.exe найден после ${attempts} попыток`);
+          resolve(true);
+          return;
+        }
+        if (attempts >= maxAttempts) {
+          console.log(`[Install] tailscale.exe не найден после ${attempts} попыток`);
+          resolve(false);
+          return;
+        }
+        setTimeout(check, 2000);
+      };
+      setTimeout(check, 3000); // первая проверка через 3с
+    });
   }
 
   // === Главная кнопка: Настроить сервер ===
@@ -512,14 +602,17 @@ class PersonalServer {
     if (!this.isTailscaleInstalled()) {
       console.log('[Friend] Tailscale не установлен, устанавливаю...');
       await this.installTailscale();
-      // После установки подождем запуск сервиса
-      await new Promise(r => setTimeout(r, 5000));
     }
 
-    // Проверяем что Tailscale реально найден
+    // Проверяем что Tailscale реально найден (включая where.exe fallback)
+    if (!this.isTailscaleInstalled()) {
+      await this.findTailscaleViaWhere();
+    }
     if (!this.isTailscaleInstalled()) {
       throw new Error('Не удалось установить Tailscale. Установите вручную: https://tailscale.com/download');
     }
+
+    console.log('[Friend] Tailscale найден:', this.tailscaleExe);
 
     if (!inviteData.ts || !inviteData.ts.authKey) {
       throw new Error('Код не содержит ключ авторизации');
@@ -544,8 +637,11 @@ class PersonalServer {
     if (!status || status.BackendState === 'NoState' || status.BackendState === 'Stopped') {
       console.log('[Friend] Запускаю сервис Tailscale...');
       try {
-        exec('net start Tailscale', { timeout: 15000 }, () => {});
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise((resolve, reject) => {
+          exec('powershell -Command "Start-Service Tailscale -ErrorAction SilentlyContinue; net start Tailscale 2>$null"',
+            { timeout: 15000 }, (err) => { resolve(); });
+        });
+        await new Promise(r => setTimeout(r, 5000));
         status = await this.getTailscaleStatus();
         console.log('[Friend] Статус после запуска сервиса:', status?.BackendState || 'null');
       } catch {}
