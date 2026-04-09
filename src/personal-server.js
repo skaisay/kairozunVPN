@@ -1,31 +1,22 @@
-const { exec, execSync } = require('child_process');
+const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const os = require('os');
 const https = require('https');
 
 /**
  * KairozunVPN — Персональный VPN-сервер (Beta)
- * 
- * Превращает ваш ПК в WireGuard VPN-сервер для друзей.
- * Весь их трафик проходит через ваш интернет.
- * 
- * Требования:
- * - Проброс порта 51820/UDP на роутере
- * - WireGuard установлен
- * - Запуск от администратора
+ *
+ * Tailscale Exit Node — один клик, полная автоматизация.
+ * API ключ хранится в конфиге — пользователь не трогает ничего вручную.
  */
 class PersonalServer {
   constructor() {
     this.configDir = path.join(os.homedir(), '.kairozun-vpn', 'server');
     this.serverDataFile = path.join(this.configDir, 'server-data.json');
-    this.clientsFile = path.join(this.configDir, 'clients.json');
-    this.serverInterface = 'kairozun-server';
-    this.serverPort = 51820;
-    this.subnet = '10.13.13';
     this.running = false;
     this.serverData = null;
+    this.tailscaleExe = null;
 
     this.ensureDir();
     this.loadServerData();
@@ -41,6 +32,7 @@ class PersonalServer {
     try {
       if (fs.existsSync(this.serverDataFile)) {
         this.serverData = JSON.parse(fs.readFileSync(this.serverDataFile, 'utf-8'));
+        console.log('[Server] Конфиг загружен:', Object.keys(this.serverData).join(', '));
       }
     } catch {
       this.serverData = null;
@@ -48,419 +40,539 @@ class PersonalServer {
   }
 
   saveServerData(data) {
-    this.serverData = data;
-    fs.writeFileSync(this.serverDataFile, JSON.stringify(data, null, 2), { encoding: 'utf-8' });
+    // Мержим с существующими данными, чтобы не потерять ключи
+    if (this.serverData && data !== this.serverData) {
+      this.serverData = { ...this.serverData, ...data };
+    } else {
+      this.serverData = data;
+    }
+    fs.writeFileSync(this.serverDataFile, JSON.stringify(this.serverData, null, 2), { encoding: 'utf-8' });
   }
 
-  getClients() {
-    try {
-      if (fs.existsSync(this.clientsFile)) {
-        return JSON.parse(fs.readFileSync(this.clientsFile, 'utf-8'));
+  // Обновить отдельные поля, не затирая остальные
+  updateServerData(fields) {
+    if (!this.serverData) this.serverData = {};
+    Object.assign(this.serverData, fields);
+    fs.writeFileSync(this.serverDataFile, JSON.stringify(this.serverData, null, 2), { encoding: 'utf-8' });
+  }
+
+  // === Tailscale: поиск ===
+
+  findTailscale() {
+    if (this.tailscaleExe && fs.existsSync(this.tailscaleExe)) {
+      return this.tailscaleExe;
+    }
+    const paths = [
+      'C:\\Program Files\\Tailscale\\tailscale.exe',
+      'C:\\Program Files (x86)\\Tailscale\\tailscale.exe',
+      path.join(os.homedir(), 'AppData', 'Local', 'Tailscale', 'tailscale.exe'),
+      path.join(process.env.ProgramFiles || '', 'Tailscale', 'tailscale.exe')
+    ];
+    for (const p of paths) {
+      if (fs.existsSync(p)) {
+        this.tailscaleExe = p;
+        return p;
       }
-    } catch {}
-    return [];
-  }
-
-  saveClients(clients) {
-    fs.writeFileSync(this.clientsFile, JSON.stringify(clients, null, 2), { encoding: 'utf-8' });
-  }
-
-  /**
-   * Инициализирует сервер: генерирует ключи, определяет публичный IP
-   */
-  async initServer() {
-    const keys = this.generateKeysLocal();
-    const publicIP = await this.getPublicIP();
-
-    const data = {
-      privateKey: keys.privateKey,
-      publicKey: keys.publicKey,
-      publicIP: publicIP,
-      port: this.serverPort,
-      subnet: this.subnet,
-      createdAt: new Date().toISOString()
-    };
-
-    this.saveServerData(data);
-    this.saveClients([]);
-
-    return data;
-  }
-
-  /**
-   * Запускает VPN-сервер
-   */
-  async startServer() {
-    if (!this.serverData) {
-      await this.initServer();
     }
+    return null;
+  }
 
-    // Обновляем публичный IP при каждом запуске
+  isTailscaleInstalled() {
+    return this.findTailscale() !== null;
+  }
+
+  // === Установка ===
+
+  async installTailscale() {
     try {
-      this.serverData.publicIP = await this.getPublicIP();
-      this.saveServerData(this.serverData);
+      await this.installViaWinget();
+      await this.waitForTailscale();
+      if (this.findTailscale()) return { installed: true };
     } catch {}
 
-    // Генерируем конфиг с текущими клиентами
-    const config = this.buildServerConfig();
-    const confPath = path.join(this.configDir, `${this.serverInterface}.conf`);
-    fs.writeFileSync(confPath, config, { encoding: 'utf-8' });
-
-    if (os.platform() !== 'win32') {
-      throw new Error('Серверный режим поддерживается только на Windows');
-    }
-
-    return await this.startServerWindows(confPath);
+    return await this.installViaMSI();
   }
 
-  startServerWindows(confPath) {
+  installViaWinget() {
     return new Promise((resolve, reject) => {
-      const wgExe = this.findWireGuardExe();
-      if (!wgExe) {
-        reject(new Error('WireGuard не установлен'));
-        return;
-      }
+      const psCmd = `Start-Process -FilePath 'powershell.exe' -ArgumentList '-Command','winget install Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements' -Verb RunAs -Wait -WindowStyle Hidden`;
+      exec(`powershell -Command "${psCmd}"`, { timeout: 180000 }, (error) => {
+        if (error) { reject(error); return; }
+        resolve();
+      });
+    });
+  }
 
-      const serviceName = `WireGuardTunnel$${this.serverInterface}`;
-
-      // PS-скрипт для запуска сервера с правами админа + включение IP forwarding + NAT
+  installViaMSI() {
+    return new Promise((resolve, reject) => {
+      const msiPath = path.join(os.tmpdir(), 'tailscale-setup.msi');
       const psScript = `
-        $ErrorActionPreference = 'Continue'
-        $wg = '${wgExe}'
-        $iface = '${this.serverInterface}'
-        $conf = '${confPath.replace(/\\/g, '\\\\').replace(/'/g, "''")}'
-        
-        # Удаляем старый туннель если есть
-        try { & $wg /uninstalltunnelservice $iface 2>$null } catch {}
-        Start-Sleep -Seconds 1
-        
-        # Устанавливаем туннель
-        & $wg /installtunnelservice $conf
-        Start-Sleep -Seconds 3
-        
-        # Включаем IP forwarding
-        Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' -Name 'IPEnableRouter' -Value 1 -Type DWord -Force
-        
-        # Включаем forwarding на всех интерфейсах
-        Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
-          Set-NetIPInterface -InterfaceIndex $_.ifIndex -Forwarding Enabled -ErrorAction SilentlyContinue
-        }
-        
-        # Пробуем настроить NAT
-        try {
-          Remove-NetNat -Name 'KairozunNAT' -Confirm:$false -ErrorAction SilentlyContinue
-        } catch {}
-        try {
-          New-NetNat -Name 'KairozunNAT' -InternalIPInterfaceAddressPrefix '${this.subnet}.0/24' -ErrorAction Stop
-        } catch {
-          # Если New-NetNat не работает, используем ICS или routing
-          # На многих Windows это работает автоматически через IP forwarding
-        }
-        
-        # Проверяем сервис
-        $svc = Get-Service -Name "WireGuardTunnel$$$iface" -ErrorAction SilentlyContinue
-        if ($svc -and $svc.Status -eq 'Running') {
-          Write-Output 'SERVER_OK'
-        } else {
-          Write-Output 'SERVER_FAIL'
-        }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile '${msiPath.replace(/'/g, "''")}' -UseBasicParsing
+        Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i','${msiPath.replace(/'/g, "''")}','/quiet','/norestart' -Wait
+        Remove-Item '${msiPath.replace(/'/g, "''")}' -Force -ErrorAction SilentlyContinue
       `.trim();
 
-      const scriptPath = path.join(this.configDir, 'start-server.ps1');
+      const scriptPath = path.join(this.configDir, 'install-ts.ps1');
       fs.writeFileSync(scriptPath, psScript, { encoding: 'utf-8' });
 
       const psCmd = `Start-Process -FilePath 'powershell.exe' -ArgumentList '-ExecutionPolicy','Bypass','-File','${scriptPath.replace(/'/g, "''")}' -Verb RunAs -Wait -WindowStyle Hidden`;
 
-      exec(`powershell -Command "${psCmd}"`, { timeout: 30000 }, (error) => {
+      exec(`powershell -Command "${psCmd}"`, { timeout: 180000 }, (error) => {
         try { fs.unlinkSync(scriptPath); } catch {}
-
         if (error) {
-          reject(new Error('Подтвердите запрос администратора (UAC) для запуска сервера'));
+          reject(new Error('Подтвердите установку Tailscale (UAC)'));
           return;
         }
-
-        // Проверяем
-        exec(`sc query "WireGuardTunnel$${this.serverInterface}"`, { timeout: 5000 }, (err, stdout) => {
-          if (!err && stdout && stdout.includes('RUNNING')) {
-            this.running = true;
-            resolve({ running: true, publicIP: this.serverData.publicIP, port: this.serverPort });
+        this.waitForTailscale().then(() => {
+          if (this.findTailscale()) {
+            resolve({ installed: true });
           } else {
-            reject(new Error('Сервер не запустился'));
+            reject(new Error('Tailscale не найден после установки'));
+          }
+        }).catch(reject);
+      });
+    });
+  }
+
+  waitForTailscale() {
+    return new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+
+  // === Главная кнопка: Настроить сервер ===
+
+  async setupServer() {
+    console.log('[Server] setupServer() начало');
+
+    // Шаг 1: Установить Tailscale
+    if (!this.isTailscaleInstalled()) {
+      console.log('[Server] Tailscale не найден, устанавливаю...');
+      await this.installTailscale();
+    }
+
+    // Быстрая проверка: может уже всё работает?
+    console.log('[Server] Проверяю статус...');
+    let status = await this.getTailscaleStatus();
+
+    if (status && status.BackendState === 'Running') {
+      const ip = (status.Self?.TailscaleIPs || [])[0] || null;
+      const hostname = status.Self?.HostName || null;
+      const isExitNode = status.Self?.ExitNodeOption === true;
+
+      console.log(`[Server] Уже Running! IP=${ip}, exitNode=${isExitNode}, hasAuthKey=${!!this.serverData?.authKey}, hasApiToken=${!!this.serverData?.apiToken}`);
+
+      // Обновить IP/hostname не затирая ключи
+      this.updateServerData({ tailscaleIP: ip, hostname: hostname });
+
+      // Если уже полностью настроен — сразу готово
+      if (isExitNode && this.serverData.authKey) {
+        console.log('[Server] Всё уже настроено, возвращаю ready');
+        return { step: 'ready', running: true, tailscaleIP: ip };
+      }
+
+      // Есть API ключ — автонастройка (только то, чего не хватает)
+      if (this.serverData.apiToken) {
+        console.log('[Server] Запускаю автонастройку через API...');
+        // Сначала включим exit node через tailscale set (быстрее чем up)
+        if (!isExitNode) {
+          try {
+            await this.runTailscaleCmd('set --advertise-exit-node');
+            console.log('[Server] set --advertise-exit-node OK');
+          } catch (e) {
+            console.log('[Server] set --advertise-exit-node ошибка:', e.message);
+          }
+        }
+        return await this.autoConfigureWithApi(ip);
+      }
+
+      // Включить exit node без API
+      if (!isExitNode) {
+        try {
+          await this.runTailscaleCmd('set --advertise-exit-node');
+        } catch {}
+      }
+
+      return { step: 'ready', running: true, tailscaleIP: ip };
+    }
+
+    // Tailscale не Running — запускаем
+    console.log('[Server] Tailscale не Running, запускаю up...');
+    try {
+      await this.runTailscaleCmd('up --advertise-exit-node --accept-dns=false');
+    } catch (e) {
+      console.log('[Server] tailscale up ошибка:', e.message);
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+    status = await this.getTailscaleStatus();
+    console.log(`[Server] Статус после up: ${status?.BackendState}`);
+
+    if (!status || status.BackendState === 'NeedsLogin') {
+      return { step: 'login' };
+    }
+
+    if (status.BackendState === 'Running') {
+      const ip = (status.Self?.TailscaleIPs || [])[0] || null;
+      const hostname = status.Self?.HostName || null;
+
+      this.updateServerData({ tailscaleIP: ip, hostname: hostname });
+
+      if (this.serverData.apiToken) {
+        return await this.autoConfigureWithApi(ip);
+      }
+
+      return { step: 'ready', running: true, tailscaleIP: ip };
+    }
+
+    return { step: 'error', message: `Статус: ${status?.BackendState || 'unknown'}` };
+  }
+
+  // === Полная автонастройка через API ===
+
+  async autoConfigureWithApi(ip) {
+    try {
+      // 1. Одобрить exit node
+      console.log('[Server] API: одобряю exit node...');
+      await this.approveExitNodeViaApi();
+      console.log('[Server] API: exit node одобрен');
+    } catch (e) {
+      console.log('[Server] Exit node approve:', e.message);
+    }
+
+    try {
+      // 2. Сгенерировать auth key для друзей (если ещё нет)
+      if (!this.serverData.authKey) {
+        console.log('[Server] API: генерирую auth key...');
+        const authKey = await this.generateAuthKeyViaApi();
+        this.updateServerData({ authKey: authKey });
+        console.log('[Server] API: auth key сохранён');
+      } else {
+        console.log('[Server] Auth key уже есть, пропускаю');
+      }
+    } catch (e) {
+      console.log('[Server] Auth key generation:', e.message);
+    }
+
+    console.log('[Server] autoConfigureWithApi завершена → ready');
+    return { step: 'ready', running: true, tailscaleIP: ip };
+  }
+
+  // === Tailscale API ===
+
+  tailscaleApi(method, endpoint, body) {
+    return new Promise((resolve, reject) => {
+      const token = this.serverData?.apiToken;
+      if (!token) {
+        reject(new Error('API ключ не установлен'));
+        return;
+      }
+
+      const postData = body ? JSON.stringify(body) : null;
+      const options = {
+        hostname: 'api.tailscale.com',
+        path: `/api/v2${endpoint}`,
+        method: method,
+        timeout: 15000,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'KairozunVPN/1.0'
+        }
+      };
+      if (postData) {
+        options.headers['Content-Length'] = Buffer.byteLength(postData);
+      }
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode >= 400) {
+            reject(new Error(`Tailscale API ${res.statusCode}: ${data.substring(0, 300)}`));
+            return;
+          }
+          try {
+            resolve(data ? JSON.parse(data) : {});
+          } catch {
+            resolve(data);
           }
         });
       });
+
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      if (postData) req.write(postData);
+      req.end();
     });
   }
 
-  /**
-   * Останавливает VPN-сервер
-   */
+  async approveExitNodeViaApi() {
+    const result = await this.tailscaleApi('GET', '/tailnet/-/devices');
+    const devices = result.devices || [];
+
+    const status = await this.getTailscaleStatus();
+    const myHostname = (status?.Self?.HostName || '').toLowerCase();
+    if (!myHostname) throw new Error('Hostname не определён');
+
+    const myDevice = devices.find(d =>
+      (d.hostname || '').toLowerCase() === myHostname ||
+      (d.name || '').toLowerCase().startsWith(myHostname + '.')
+    );
+
+    if (!myDevice) throw new Error('Устройство не найдено в Tailscale');
+
+    await this.tailscaleApi('POST', `/device/${myDevice.id}/routes`, {
+      routes: ['0.0.0.0/0', '::/0']
+    });
+
+    return { approved: true };
+  }
+
+  async generateAuthKeyViaApi() {
+    const result = await this.tailscaleApi('POST', '/tailnet/-/keys', {
+      capabilities: {
+        devices: {
+          create: {
+            reusable: true,
+            ephemeral: false,
+            preauthorized: true,
+            tags: []
+          }
+        }
+      },
+      expirySeconds: 7776000 // 90 дней
+    });
+
+    if (!result.key) throw new Error('Не удалось создать auth key');
+    return result.key;
+  }
+
+  // === Сохранить auth key вручную (запасной вариант) ===
+
+  setAuthKey(key) {
+    if (!key || !key.startsWith('tskey-auth-')) {
+      throw new Error('Ключ должен начинаться с tskey-auth-...');
+    }
+
+    if (!/^tskey-auth-[a-zA-Z0-9_-]+$/.test(key)) {
+      throw new Error('Невалидный формат ключа');
+    }
+
+    if (!this.serverData) this.serverData = {};
+    this.serverData.authKey = key;
+    this.saveServerData(this.serverData);
+
+    return { success: true };
+  }
+
+  // === Управление сервером ===
+
+  async startServer() {
+    const exe = this.findTailscale();
+    if (!exe) throw new Error('Tailscale не установлен');
+
+    await this.runTailscaleCmd('set --advertise-exit-node');
+    console.log('[Server] Exit node запущен');
+    await new Promise(r => setTimeout(r, 1000));
+
+    const status = await this.getTailscaleStatus();
+    if (status?.BackendState === 'Running') {
+      this.running = true;
+      const ip = (status.Self?.TailscaleIPs || [])[0];
+      return { running: true, tailscaleIP: ip };
+    }
+
+    if (status?.BackendState === 'NeedsLogin') {
+      return { running: false, needsLogin: true };
+    }
+
+    throw new Error('Не удалось запустить');
+  }
+
   async stopServer() {
-    return new Promise((resolve) => {
-      const wgExe = this.findWireGuardExe();
-      if (!wgExe) {
-        this.running = false;
-        resolve();
-        return;
-      }
-
-      const psScript = `
-        $wg = '${wgExe}'
-        & $wg /uninstalltunnelservice '${this.serverInterface}'
-        
-        # Удаляем NAT
-        try { Remove-NetNat -Name 'KairozunNAT' -Confirm:$false -ErrorAction SilentlyContinue } catch {}
-      `.trim();
-
-      const scriptPath = path.join(this.configDir, 'stop-server.ps1');
-      fs.writeFileSync(scriptPath, psScript, { encoding: 'utf-8' });
-
-      const psCmd = `Start-Process -FilePath 'powershell.exe' -ArgumentList '-ExecutionPolicy','Bypass','-File','${scriptPath.replace(/'/g, "''")}' -Verb RunAs -Wait -WindowStyle Hidden`;
-
-      exec(`powershell -Command "${psCmd}"`, { timeout: 15000 }, () => {
-        try { fs.unlinkSync(scriptPath); } catch {}
-        this.running = false;
-        resolve();
-      });
-    });
+    const exe = this.findTailscale();
+    if (!exe) { this.running = false; return; }
+    try {
+      await this.runTailscaleCmd('set --advertise-exit-node=false');
+      console.log('[Server] Exit node остановлен');
+    } catch (e) {
+      console.log('[Server] Ошибка остановки:', e.message);
+    }
+    this.running = false;
   }
 
-  /**
-   * Добавляет нового клиента (друга)
-   */
-  async addClient(clientName) {
-    if (!this.serverData) {
-      throw new Error('Сервер не инициализирован');
+  // === Статус ===
+
+  async getServerStatus() {
+    const installed = this.isTailscaleInstalled();
+    if (!installed) {
+      return { running: false, tailscaleInstalled: false, configured: false, peers: 0, peerList: [] };
     }
 
-    const clients = this.getClients();
-    const clientIndex = clients.length + 2; // +2 т.к. .1 = сервер
-    const clientIP = `${this.subnet}.${clientIndex}`;
-
-    if (clientIndex > 254) {
-      throw new Error('Максимальное количество клиентов (253) достигнуто');
+    const status = await this.getTailscaleStatus();
+    if (!status) {
+      return {
+        running: false, tailscaleInstalled: true, loggedIn: false,
+        configured: false, peers: 0, peerList: []
+      };
     }
 
-    const keys = this.generateKeysLocal();
+    const isRunning = status.BackendState === 'Running';
+    const self = status.Self || {};
+    const isExitNode = self.ExitNodeOption === true;
 
-    const client = {
-      id: 'client-' + crypto.randomBytes(4).toString('hex'),
-      name: clientName || `Друг #${clients.length + 1}`,
-      privateKey: keys.privateKey,
-      publicKey: keys.publicKey,
-      ip: clientIP,
-      createdAt: new Date().toISOString(),
-      inviteCode: null
-    };
-
-    // Генерируем конфиг для клиента
-    const clientConfig = this.buildClientConfig(client);
-
-    // Генерируем invite-код
-    const inviteCode = this.generateInviteCode(client, clientConfig);
-    client.inviteCode = inviteCode;
-
-    clients.push(client);
-    this.saveClients(clients);
-
-    // Если сервер запущен, перезапускаем для применения нового пира
-    if (this.running) {
-      try {
-        await this.restartServer();
-      } catch {}
+    let peers = 0;
+    const peerList = [];
+    if (status.Peer) {
+      for (const [, p] of Object.entries(status.Peer)) {
+        if (p.Online) {
+          peers++;
+          peerList.push({
+            name: p.HostName || p.DNSName || 'Неизвестный',
+            ip: (p.TailscaleIPs || [])[0] || '—',
+            os: p.OS || '—',
+            online: true,
+            exitNodePeer: p.ExitNode === true
+          });
+        }
+      }
     }
+
+    this.running = isRunning && isExitNode;
 
     return {
-      client,
-      config: clientConfig,
-      inviteCode
+      running: this.running,
+      tailscaleInstalled: true,
+      loggedIn: isRunning,
+      backendState: status.BackendState,
+      tailscaleIP: (self.TailscaleIPs || [])[0] || null,
+      hostname: self.HostName || null,
+      isExitNode: isExitNode,
+      peers: peers,
+      peerList: peerList,
+      configured: !!(this.serverData?.authKey && isExitNode),
+      hasAuthKey: !!(this.serverData?.authKey)
     };
   }
 
-  /**
-   * Удаляет клиента
-   */
-  async removeClient(clientId) {
-    const clients = this.getClients();
-    const filtered = clients.filter(c => c.id !== clientId);
-    this.saveClients(filtered);
-
-    if (this.running) {
-      try {
-        await this.restartServer();
-      } catch {}
-    }
-  }
-
-  /**
-   * Перезапускает сервер с обновлённым конфигом
-   */
-  async restartServer() {
-    await this.stopServer();
-    await new Promise(r => setTimeout(r, 1000));
-    await this.startServer();
-  }
-
-  /**
-   * Проверяет статус сервера
-   */
-  getServerStatus() {
-    return new Promise((resolve) => {
-      const serviceName = `WireGuardTunnel$${this.serverInterface}`;
-      exec(`sc query "${serviceName}"`, { timeout: 5000 }, (error, stdout) => {
-        if (!error && stdout && stdout.includes('RUNNING')) {
-          this.running = true;
-          resolve({
-            running: true,
-            publicIP: this.serverData ? this.serverData.publicIP : null,
-            port: this.serverPort,
-            clients: this.getClients().length
-          });
-        } else {
-          this.running = false;
-          resolve({ running: false, clients: this.getClients().length });
-        }
-      });
-    });
-  }
-
-  /**
-   * Возвращает инфо о сервере
-   */
   getServerInfo() {
     return {
       initialized: this.serverData !== null,
-      publicIP: this.serverData ? this.serverData.publicIP : null,
-      publicKey: this.serverData ? this.serverData.publicKey : null,
-      port: this.serverPort,
-      subnet: this.subnet + '.0/24',
-      clients: this.getClients()
+      tailscaleInstalled: this.isTailscaleInstalled(),
+      tailscaleIP: this.serverData?.tailscaleIP || null,
+      hostname: this.serverData?.hostname || null,
+      configured: !!(this.serverData?.authKey)
     };
   }
 
-  // === Конфигурации ===
+  // === Invite-коды ===
 
-  buildServerConfig() {
-    const clients = this.getClients();
-
-    let config = `[Interface]
-PrivateKey = ${this.serverData.privateKey}
-Address = ${this.subnet}.1/24
-ListenPort = ${this.serverPort}
-DNS = 1.1.1.1, 1.0.0.1
-`;
-
-    for (const client of clients) {
-      config += `
-[Peer]
-# ${client.name}
-PublicKey = ${client.publicKey}
-AllowedIPs = ${client.ip}/32
-`;
+  generateInviteCode(friendName) {
+    if (!this.serverData?.authKey) {
+      throw new Error('Сервер не настроен. Нажмите «Настроить».');
     }
 
-    return config;
-  }
-
-  buildClientConfig(client) {
-    return `[Interface]
-PrivateKey = ${client.privateKey}
-Address = ${client.ip}/32
-DNS = 1.1.1.1, 1.0.0.1
-MTU = 1280
-
-[Peer]
-PublicKey = ${this.serverData.publicKey}
-AllowedIPs = 0.0.0.0/0
-Endpoint = ${this.serverData.publicIP}:${this.serverPort}
-PersistentKeepalive = 25
-`;
-  }
-
-  /**
-   * Генерирует invite-код (base64 JSON с данными для подключения)
-   */
-  generateInviteCode(client, configRaw) {
     const data = {
-      v: 1,
+      v: 2,
       type: 'kairozun-invite',
-      name: client.name,
-      config: configRaw,
-      server: {
-        publicKey: this.serverData.publicKey,
-        ip: this.serverData.publicIP,
-        port: this.serverPort
-      },
-      client: {
-        privateKey: client.privateKey,
-        publicKey: client.publicKey,
-        ip: client.ip
+      name: friendName || 'Друг',
+      ts: {
+        authKey: this.serverData.authKey,
+        exitNode: this.serverData.tailscaleIP,
+        hostname: this.serverData.hostname
       }
     };
+
     return Buffer.from(JSON.stringify(data)).toString('base64');
   }
 
-  /**
-   * Парсит invite-код и создаёт конфиг
-   */
   static parseInviteCode(code) {
     try {
       const json = JSON.parse(Buffer.from(code, 'base64').toString('utf-8'));
-      if (json.type !== 'kairozun-invite' || !json.config) {
-        throw new Error('Неверный формат кода');
-      }
+      if (json.type !== 'kairozun-invite') throw new Error('Неверный формат');
       return json;
     } catch (e) {
-      throw new Error('Невалидный код приглашения: ' + e.message);
+      throw new Error('Невалидный код: ' + e.message);
     }
+  }
+
+  // === Для друга: подключение через invite-код ===
+
+  async connectAsFriend(inviteData) {
+    if (!this.isTailscaleInstalled()) {
+      await this.installTailscale();
+    }
+
+    if (!inviteData.ts || !inviteData.ts.authKey) {
+      throw new Error('Код не содержит ключ авторизации');
+    }
+
+    const authKey = inviteData.ts.authKey;
+    const exitNode = inviteData.ts.exitNode;
+
+    // Валидация от инъекций
+    if (!/^tskey-auth-[a-zA-Z0-9_-]+$/.test(authKey)) {
+      throw new Error('Невалидный auth key');
+    }
+    if (exitNode && !/^[\d.]+$/.test(exitNode)) {
+      throw new Error('Невалидный exit node');
+    }
+
+    await this.runTailscaleCmd(`up --auth-key=${authKey} --accept-routes`);
+    await new Promise(r => setTimeout(r, 5000));
+
+    if (exitNode) {
+      await this.runTailscaleCmd(`set --exit-node=${exitNode}`);
+    }
+
+    return { connected: true, exitNode };
+  }
+
+  async disconnectFriend() {
+    try { await this.runTailscaleCmd('set --exit-node='); } catch {}
+  }
+
+  openAdminConsole(page) {
+    const urls = {
+      machines: 'https://login.tailscale.com/admin/machines',
+      keys: 'https://login.tailscale.com/admin/settings/keys',
+      default: 'https://login.tailscale.com/admin/machines'
+    };
+    exec(`start "" "${urls[page] || urls.default}"`);
   }
 
   // === Утилиты ===
 
-  async getPublicIP() {
-    return new Promise((resolve, reject) => {
-      const req = https.get({
-        hostname: 'api.ipify.org',
-        path: '/?format=json',
-        timeout: 8000,
-        headers: { 'User-Agent': 'KairozunVPN/1.0' }
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            resolve(json.ip);
-          } catch {
-            reject(new Error('Не удалось определить IP'));
-          }
-        });
+  getTailscaleStatus() {
+    const exe = this.findTailscale();
+    if (!exe) return Promise.resolve(null);
+
+    return new Promise((resolve) => {
+      exec(`"${exe}" status --json`, { timeout: 10000 }, (error, stdout) => {
+        if (error || !stdout) { resolve(null); return; }
+        try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
       });
-      req.on('error', (e) => reject(e));
-      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
     });
   }
 
-  generateKeysLocal() {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('x25519');
-    const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
-    const pubDer = publicKey.export({ type: 'spki', format: 'der' });
-    return {
-      privateKey: privDer.subarray(privDer.length - 32).toString('base64'),
-      publicKey: pubDer.subarray(pubDer.length - 32).toString('base64')
-    };
-  }
+  runTailscaleCmd(args) {
+    const exe = this.findTailscale();
+    if (!exe) throw new Error('Tailscale не найден');
 
-  findWireGuardExe() {
-    const paths = [
-      'C:\\Program Files\\WireGuard\\wireguard.exe',
-      'C:\\Program Files (x86)\\WireGuard\\wireguard.exe',
-      path.join(os.homedir(), 'AppData', 'Local', 'WireGuard', 'wireguard.exe')
-    ];
-    for (const p of paths) {
-      if (fs.existsSync(p)) return p;
-    }
-    return null;
+    return new Promise((resolve, reject) => {
+      exec(`"${exe}" ${args}`, { timeout: 30000 }, (error, stdout, stderr) => {
+        if (error) {
+          const msg = stderr || error.message || '';
+          if (msg.includes('already') || msg.includes('Success') || msg.includes('NeedsLogin')) {
+            resolve(stdout || msg);
+            return;
+          }
+          reject(new Error(msg));
+          return;
+        }
+        resolve(stdout || '');
+      });
+    });
   }
 }
 

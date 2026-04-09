@@ -6,3 +6,4 @@ dist/
 *.key
 *.conf
 !server/templates/*.conf
+server-data.json

@@ -1197,6 +1197,172 @@ body {
   height: 26px;
 }
 
+/* === Server Console === */
+.server-console {
+  margin: 8px 0;
+  padding: 0;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.console-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.console-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+.console-live-dot.active {
+  background: #10b981;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+.console-body {
+  padding: 8px 10px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+}
+
+.console-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.console-row.dim {
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.console-label {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.console-value {
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.console-value.online {
+  color: #10b981;
+}
+
+.console-value.offline {
+  color: #ef4444;
+}
+
+.console-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 4px 0;
+}
+
+.console-peers-list {
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.console-peer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.console-peer-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #10b981;
+  flex-shrink: 0;
+}
+
+.console-peer-name {
+  color: rgba(255, 255, 255, 0.7);
+  flex: 1;
+}
+
+.console-peer-ip {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 10px;
+}
+
+.console-log {
+  max-height: 60px;
+  overflow-y: auto;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 10px;
+}
+
+.console-log-entry {
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.console-log-entry .log-time {
+  color: rgba(99, 102, 241, 0.5);
+  margin-right: 4px;
+}
+
+/* Loading spinner */
+@keyframes spinner-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spinner-rotate 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.loading-spinner.spinner-lg {
+  width: 22px;
+  height: 22px;
+  border-width: 2.5px;
+}
+
+.loading-spinner.spinner-green {
+  border-top-color: #10b981;
+}
+
+.loading-spinner.spinner-amber {
+  border-top-color: #f59e0b;
+}
+
 /* How it works steps */
 .server-how-it-works {
   display: flex;

@@ -235,11 +235,29 @@ app.whenReady().then(() => {
     }
   });
 
-  // IPC: Персональный сервер (Beta)
-  ipcMain.handle('server-init', async () => {
+  // IPC: Персональный сервер (Beta) — Tailscale
+  ipcMain.handle('server-setup', async () => {
     try {
-      const data = await personalServer.initServer();
-      return { success: true, data };
+      const result = await personalServer.setupServer();
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('server-install-tailscale', async () => {
+    try {
+      const result = await personalServer.installTailscale();
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('server-set-auth-key', async (event, key) => {
+    try {
+      const result = personalServer.setAuthKey(key);
+      return { success: true, data: result };
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -281,18 +299,18 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('server-add-client', async (event, clientName) => {
+  ipcMain.handle('server-generate-invite', async (event, friendName) => {
     try {
-      const result = await personalServer.addClient(clientName);
-      return { success: true, data: result };
+      const inviteCode = personalServer.generateInviteCode(friendName);
+      return { success: true, data: { inviteCode } };
     } catch (error) {
       return { success: false, error: error.message };
     }
   });
 
-  ipcMain.handle('server-remove-client', async (event, clientId) => {
+  ipcMain.handle('server-open-admin', async (event, page) => {
     try {
-      await personalServer.removeClient(clientId);
+      personalServer.openAdminConsole(page);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -303,38 +321,8 @@ app.whenReady().then(() => {
     try {
       const PersonalServerClass = require('./src/personal-server');
       const invite = PersonalServerClass.parseInviteCode(inviteCode);
-
-      // Импортируем конфиг как пользовательский сервер
-      const serverId = 'friend-' + require('crypto').randomBytes(4).toString('hex');
-      const server = {
-        id: serverId,
-        name: `🏠 ${invite.name || 'Друг'}`,
-        endpoint: `${invite.server.ip}:${invite.server.port}`,
-        flag: '🏠',
-        country: 'Персональный сервер',
-        type: 'personal',
-        config: {
-          Interface: {
-            PrivateKey: invite.client.privateKey,
-            Address: `${invite.client.ip}/32`,
-            DNS: '1.1.1.1, 1.0.0.1',
-            MTU: '1280'
-          },
-          Peer: {
-            PublicKey: invite.server.publicKey,
-            AllowedIPs: '0.0.0.0/0',
-            Endpoint: `${invite.server.ip}:${invite.server.port}`,
-            PersistentKeepalive: '25'
-          }
-        },
-        configRaw: invite.config
-      };
-
-      const servers = vpnManager.getServers();
-      servers.push(server);
-      vpnManager.saveServers(servers);
-
-      return { success: true, data: server };
+      const result = await personalServer.connectAsFriend(invite);
+      return { success: true, data: result };
     } catch (error) {
       return { success: false, error: error.message };
     }

@@ -28,13 +28,15 @@ contextBridge.exposeInMainWorld('kairozunAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
 
-  // Персональный сервер (Beta)
-  serverInit: () => ipcRenderer.invoke('server-init'),
+  // Персональный сервер (Beta) — Tailscale
+  serverSetup: () => ipcRenderer.invoke('server-setup'),
+  serverInstallTailscale: () => ipcRenderer.invoke('server-install-tailscale'),
+  serverSetAuthKey: (key) => ipcRenderer.invoke('server-set-auth-key', key),
   serverStart: () => ipcRenderer.invoke('server-start'),
   serverStop: () => ipcRenderer.invoke('server-stop'),
   serverStatus: () => ipcRenderer.invoke('server-status'),
   serverInfo: () => ipcRenderer.invoke('server-info'),
-  serverAddClient: (name) => ipcRenderer.invoke('server-add-client', name),
-  serverRemoveClient: (id) => ipcRenderer.invoke('server-remove-client', id),
+  serverGenerateInvite: (name) => ipcRenderer.invoke('server-generate-invite', name),
+  serverOpenAdmin: (page) => ipcRenderer.invoke('server-open-admin', page),
   serverImportInvite: (code) => ipcRenderer.invoke('server-import-invite', code)
 });

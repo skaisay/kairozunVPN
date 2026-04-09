@@ -103,15 +103,18 @@ class KairozunApp {
       });
     }
 
-    // === Beta: Персональный сервер ===
+    // === Beta: Персональный сервер (Tailscale) ===
     document.getElementById('btn-server-mode').addEventListener('click', () => {
       this.showServerModal();
+    });
+    document.getElementById('btn-server-setup').addEventListener('click', () => {
+      this.setupServer();
     });
     document.getElementById('btn-server-toggle').addEventListener('click', () => {
       this.toggleServer();
     });
     document.getElementById('btn-add-friend').addEventListener('click', () => {
-      this.addFriend();
+      this.generateInvite();
     });
     document.getElementById('btn-import-invite').addEventListener('click', () => {
       this.importInviteCode();
@@ -717,39 +720,208 @@ class KairozunApp {
   async showServerModal() {
     this.showModal('modal-server');
     await this.refreshServerStatus();
+    this.startServerPolling();
+  }
+
+  stopServerPolling() {
+    if (this.serverPollTimer) {
+      clearInterval(this.serverPollTimer);
+      this.serverPollTimer = null;
+    }
+  }
+
+  startServerPolling() {
+    this.stopServerPolling();
+    this.serverPollTimer = setInterval(async () => {
+      // Только если модалка открыта
+      const modal = document.getElementById('modal-server');
+      if (modal.style.display === 'none' || modal.style.display === '') {
+        this.stopServerPolling();
+        return;
+      }
+      await this.refreshServerStatus();
+    }, 3000);
+  }
+
+  showPhase(phase) {
+    ['phase-setup', 'phase-login', 'phase-configuring', 'phase-ready'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    const target = document.getElementById('phase-' + phase);
+    if (target) target.style.display = 'block';
   }
 
   async refreshServerStatus() {
     const statusResult = await window.kairozunAPI.serverStatus();
-    const infoResult = await window.kairozunAPI.serverInfo();
-
     const indicator = document.getElementById('server-indicator');
     const label = document.getElementById('server-status-label');
     const details = document.getElementById('server-details');
-    const btn = document.getElementById('btn-server-toggle');
 
-    if (statusResult.success && statusResult.data.running) {
-      indicator.classList.add('online');
-      label.textContent = 'Сервер запущен';
-      details.style.display = 'flex';
-      btn.classList.add('running');
-      btn.querySelector('svg').innerHTML = '<rect x="6" y="6" width="12" height="12" rx="2"/>';
-      btn.querySelector('span').textContent = 'Остановить сервер';
-    } else {
+    if (!statusResult.success) return;
+    const s = statusResult.data;
+
+    // Показываем ready если залогинен (сервер уже был настроен)
+    if (s.loggedIn && (s.configured || s.isExitNode || s.hasAuthKey)) {
+      this.showPhase('ready');
+
+      const btn = document.getElementById('btn-server-toggle');
+      if (s.isExitNode) {
+        indicator.classList.add('online');
+        label.textContent = 'Exit Node активен';
+        details.style.display = 'flex';
+        btn.classList.add('running');
+        btn.querySelector('span').textContent = 'Остановить Exit Node';
+        btn.classList.add('connected');
+        // Добавить в основной список если ещё нет
+        if (!this.servers.find(sv => sv.id === 'tailscale-personal')) {
+          await this.addTailscaleServer();
+        }
+      } else {
+        indicator.classList.remove('online');
+        label.textContent = 'Exit Node остановлен';
+        details.style.display = 'none';
+        btn.classList.remove('running');
+        btn.classList.remove('connected');
+        btn.querySelector('span').textContent = 'Запустить Exit Node';
+      }
+
+      // Обновить консоль
+      this.updateServerConsole(s);
+    } else if (!s.tailscaleInstalled || !s.loggedIn) {
+      this.showPhase('setup');
       indicator.classList.remove('online');
-      label.textContent = 'Сервер не запущен';
+      label.textContent = s.tailscaleInstalled ? 'Требуется вход' : 'Не настроен';
       details.style.display = 'none';
-      btn.classList.remove('running');
-      btn.querySelector('svg').innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
-      btn.querySelector('span').textContent = 'Запустить сервер';
+    } else {
+      this.showPhase('setup');
+      indicator.classList.remove('online');
+      label.textContent = 'Требуется настройка';
+      details.style.display = 'none';
     }
 
-    if (infoResult.success && infoResult.data) {
-      const info = infoResult.data;
-      document.getElementById('server-public-ip').textContent = info.publicIP || '—';
-      document.getElementById('server-client-count').textContent = info.clients ? info.clients.length : 0;
-      this.renderServerClients(info.clients || []);
+    document.getElementById('server-public-ip').textContent = s.tailscaleIP || '—';
+    document.getElementById('server-client-count').textContent = s.peers || 0;
+  }
+
+  updateServerConsole(s) {
+    const conStatus = document.getElementById('con-status');
+    const conExitNode = document.getElementById('con-exit-node');
+    const conIP = document.getElementById('con-ip');
+    const conPeers = document.getElementById('con-peers');
+    const conPeersList = document.getElementById('con-peers-list');
+    const liveDot = document.getElementById('console-live-dot');
+
+    if (!conStatus) return;
+
+    // Статус
+    if (s.isExitNode && s.loggedIn) {
+      conStatus.textContent = 'Активен';
+      conStatus.className = 'console-value online';
+      liveDot.className = 'console-live-dot active';
+    } else if (s.loggedIn) {
+      conStatus.textContent = 'Остановлен';
+      conStatus.className = 'console-value offline';
+      liveDot.className = 'console-live-dot';
+    } else {
+      conStatus.textContent = 'Отключён';
+      conStatus.className = 'console-value offline';
+      liveDot.className = 'console-live-dot';
     }
+
+    conExitNode.textContent = s.isExitNode ? 'Включён' : 'Выключен';
+    conExitNode.className = s.isExitNode ? 'console-value online' : 'console-value offline';
+    conIP.textContent = s.tailscaleIP || '—';
+    conPeers.textContent = s.peers || 0;
+
+    // Список пиров
+    if (s.peerList && s.peerList.length > 0) {
+      conPeersList.innerHTML = s.peerList.map(p => `
+        <div class="console-peer">
+          <div class="console-peer-dot"></div>
+          <span class="console-peer-name">${this.escapeHtml(p.name)}</span>
+          <span class="console-peer-ip">${this.escapeHtml(p.ip)} · ${this.escapeHtml(p.os)}</span>
+        </div>
+      `).join('');
+    } else {
+      conPeersList.innerHTML = '<div class="console-row dim">Нет подключённых устройств</div>';
+    }
+  }
+
+  serverLog(msg) {
+    const log = document.getElementById('console-log');
+    if (!log) return;
+    const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const entry = document.createElement('div');
+    entry.className = 'console-log-entry';
+    entry.innerHTML = `<span class="log-time">${time}</span>${this.escapeHtml(msg)}`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+    // Ограничить до 20 записей
+    while (log.children.length > 20) {
+      log.removeChild(log.firstChild);
+    }
+  }
+
+  async setupServer() {
+    const btn = document.getElementById('btn-server-setup');
+    const hint = document.getElementById('setup-hint');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="loading-spinner spinner-lg"></div><span>Настраиваю...</span>';
+    hint.textContent = 'Подождите, всё делается автоматически...';
+
+    const result = await window.kairozunAPI.serverSetup();
+
+    if (!result.success) {
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>🚀 Настроить сервер</span>';
+      hint.textContent = 'Один клик — всё автоматически';
+      this.notify(result.error || 'Ошибка', 'error');
+      return;
+    }
+
+    if (result.data.step === 'login') {
+      this.showPhase('login');
+      this.notify('Войдите в Tailscale в браузере', 'info');
+      this.startLoginPolling();
+      return;
+    }
+
+    if (result.data.step === 'ready') {
+      this.showPhase('ready');
+      this.notify('Сервер готов! Создавайте коды для друзей.', 'success');
+      await this.refreshServerStatus();
+      return;
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>🚀 Настроить сервер</span>';
+    this.notify(result.data.message || 'Неизвестная ошибка', 'error');
+  }
+
+  startLoginPolling() {
+    if (this.loginPollTimer) clearInterval(this.loginPollTimer);
+    this.loginPollTimer = setInterval(async () => {
+      const status = await window.kairozunAPI.serverStatus();
+      if (status.success && status.data.loggedIn) {
+        clearInterval(this.loginPollTimer);
+        this.loginPollTimer = null;
+
+        // Показываем "настраиваю..."
+        this.showPhase('configuring');
+
+        // Запускаем полную автонастройку
+        const setupResult = await window.kairozunAPI.serverSetup();
+        if (setupResult.success && setupResult.data.step === 'ready') {
+          this.showPhase('ready');
+          this.notify('Сервер полностью настроен!', 'success');
+        } else {
+          this.showPhase('ready');
+          this.notify('Сервер настроен.', 'success');
+        }
+        await this.refreshServerStatus();
+      }
+    }, 3000);
   }
 
   async toggleServer() {
@@ -758,42 +930,79 @@ class KairozunApp {
 
     btn.disabled = true;
     btn.querySelector('span').textContent = isRunning ? 'Остановка...' : 'Запуск...';
+    this.serverLog(isRunning ? 'Остановка Exit Node...' : 'Запуск Exit Node...');
 
     if (isRunning) {
       const result = await window.kairozunAPI.serverStop();
       if (result.success) {
-        this.notify('Сервер остановлен', 'info');
+        this.notify('Exit Node остановлен', 'info');
+        this.serverLog('Exit Node остановлен');
+        this.removeTailscaleServer();
       } else {
-        this.notify(result.error || 'Ошибка остановки', 'error');
+        this.notify(result.error || 'Ошибка', 'error');
+        this.serverLog('Ошибка: ' + (result.error || 'неизвестно'));
       }
     } else {
       const result = await window.kairozunAPI.serverStart();
       if (result.success) {
-        this.notify('VPN-сервер запущен!', 'success');
+        this.notify('Exit Node запущен!', 'success');
+        this.serverLog('Exit Node запущен');
+        await this.addTailscaleServer();
       } else {
-        this.notify(result.error || 'Ошибка запуска сервера', 'error');
+        this.notify(result.error || 'Ошибка', 'error');
+        this.serverLog('Ошибка: ' + (result.error || 'неизвестно'));
       }
     }
 
     btn.disabled = false;
+    // Небольшая задержка чтобы Tailscale обновил статус
+    await new Promise(r => setTimeout(r, 1500));
     await this.refreshServerStatus();
   }
 
-  async addFriend() {
+  // Добавить Tailscale-сервер в основной список
+  async addTailscaleServer() {
+    const info = await window.kairozunAPI.serverInfo();
+    if (!info.success) return;
+    const ip = info.data.tailscaleIP;
+    if (!ip) return;
+
+    // Удалить старый если есть
+    this.servers = this.servers.filter(s => s.id !== 'tailscale-personal');
+
+    this.servers.unshift({
+      id: 'tailscale-personal',
+      name: 'Мой сервер (Tailscale)',
+      flag: '🖥️',
+      country: 'Норвегия',
+      endpoint: ip
+    });
+    this.selectedServer = 'tailscale-personal';
+    this.renderServers();
+  }
+
+  // Убрать Tailscale-сервер из основного списка
+  removeTailscaleServer() {
+    this.servers = this.servers.filter(s => s.id !== 'tailscale-personal');
+    if (this.selectedServer === 'tailscale-personal') {
+      this.selectedServer = this.servers.length > 0 ? this.servers[0].id : null;
+    }
+    this.renderServers();
+  }
+
+  async generateInvite() {
     const input = document.getElementById('friend-name-input');
     const name = input.value.trim() || null;
 
-    const result = await window.kairozunAPI.serverAddClient(name);
+    const result = await window.kairozunAPI.serverGenerateInvite(name);
     if (result.success) {
       input.value = '';
-      // Показываем invite-код
       document.getElementById('invite-code-display').value = result.data.inviteCode;
       document.getElementById('invite-code-box').textContent = result.data.inviteCode;
       this.showModal('modal-invite');
-      this.notify(`Клиент "${result.data.client.name}" добавлен`, 'success');
-      await this.refreshServerStatus();
+      this.notify('Код создан! Отправьте другу.', 'success');
     } else {
-      this.notify(result.error || 'Ошибка добавления', 'error');
+      this.notify(result.error || 'Ошибка', 'error');
     }
   }
 
@@ -805,77 +1014,21 @@ class KairozunApp {
       return;
     }
 
+    const btn = document.getElementById('btn-import-invite');
+    btn.textContent = 'Подключение...';
+    btn.disabled = true;
+
     const result = await window.kairozunAPI.serverImportInvite(code);
     if (result.success) {
       input.value = '';
       this.hideModal('modal-server');
-      // Перезагружаем серверы
-      await this.loadServers();
-      this.notify('Сервер друга добавлен! Выберите его и подключитесь.', 'success');
+      this.notify('Подключено! Весь трафик идёт через VPN друга.', 'success');
     } else {
       this.notify(result.error || 'Неверный код', 'error');
     }
-  }
 
-  renderServerClients(clients) {
-    const list = document.getElementById('server-clients-list');
-    if (!clients || clients.length === 0) {
-      list.innerHTML = '<div class="empty-servers" style="padding:10px"><span style="opacity:.5">Нет клиентов</span></div>';
-      return;
-    }
-
-    list.innerHTML = clients.map(c => `
-      <div class="server-client-item" data-client-id="${this.escapeHtml(c.id)}">
-        <div class="server-client-info">
-          <div class="server-client-name">${this.escapeHtml(c.name)}</div>
-          <div class="server-client-ip">${this.escapeHtml(c.ip)}</div>
-        </div>
-        <div class="server-client-actions">
-          <button class="icon-btn" data-show-invite="${this.escapeHtml(c.id)}" title="Показать код">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="2" y="2" width="12" height="12" rx="2"/>
-              <path d="M5 8h6M8 5v6"/>
-            </svg>
-          </button>
-          <button class="icon-btn" data-delete-client="${this.escapeHtml(c.id)}" title="Удалить">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M2 4h12M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v5M10 7v5"/>
-              <path d="M3 4l1 9a1 1 0 001 1h6a1 1 0 001-1l1-9"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `).join('');
-
-    // Обработчики
-    list.querySelectorAll('[data-delete-client]').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const clientId = btn.getAttribute('data-delete-client');
-        const result = await window.kairozunAPI.serverRemoveClient(clientId);
-        if (result.success) {
-          this.notify('Клиент удалён', 'info');
-          await this.refreshServerStatus();
-        }
-      });
-    });
-
-    list.querySelectorAll('[data-show-invite]').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const clientId = btn.getAttribute('data-show-invite');
-        // Получаем инфо и генерируем invite заново
-        const infoResult = await window.kairozunAPI.serverInfo();
-        if (infoResult.success) {
-          const client = infoResult.data.clients.find(c => c.id === clientId);
-          if (client && client.inviteCode) {
-            document.getElementById('invite-code-display').value = client.inviteCode;
-            document.getElementById('invite-code-box').textContent = client.inviteCode;
-          }
-        }
-        this.showModal('modal-invite');
-      });
-    });
+    btn.textContent = 'Подключить';
+    btn.disabled = false;
   }
 
   // === Модальные окна ===
@@ -886,6 +1039,9 @@ class KairozunApp {
 
   hideModal(id) {
     document.getElementById(id).style.display = 'none';
+    if (id === 'modal-server') {
+      this.stopServerPolling();
+    }
   }
 
   // === Уведомления ===
